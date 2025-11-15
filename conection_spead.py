@@ -18,8 +18,9 @@ SPREADSHEETS = [
         "url": "https://docs.google.com/spreadsheets/d/1GDENDvDbSRJdFninD43X73xKykH_lHundkTRtpow55g",
         # Lista de pestañas y rutas (pueden ser a archivo o carpeta)
         "sheets": [
-            {"sheet_name": "clientes", "path": "/home/jesus/Documents/pmol/dev/python.csv"},
-            {"sheet_name": "process",  "path": "/home/jesus/Documents/vscode/show/pyspark/DATA-SC-DET08-process-2025-05-01/"},
+            {"sheet_name": "data_prueba", "path": "/Users/amancayjesus/Documents/projects/python/database_local/input/pmt_ofi.csv"}
+            # {"sheet_name": "clientes", "path": "/home/jesus/Documents/pmol/dev/python.csv"},
+            # {"sheet_name": "process",  "path": "/home/jesus/Documents/vscode/show/pyspark/DATA-SC-DET08-process-2025-05-01/"},
             # {"sheet_name": "ventas", "path": "/ruta/a/archivo.parquet"},
         ]
     },
@@ -27,7 +28,7 @@ SPREADSHEETS = [
 ]
 
 # Ruta al JSON de credenciales de Service Account
-auth_path = "/home/jesus/Documents/database_local/auth/credentials.json"
+auth_path = "/Users/amancayjesus/Documents/projects/python/database_local/auth/credentials.json"
 
 # === Funciones ===
 
@@ -45,29 +46,66 @@ def authenticate(creds_path):
 
 def read_path_to_df(path):
     """
-    Lee un archivo CSV/Parquet o todos los archivos dentro de una carpeta.
-    Retorna DataFrame concatenado y con NaN reemplazados por cadena vacía.
+    Lee un archivo CSV o Parquet, o todos los archivos dentro de una carpeta.
+    Soporta múltiples encodings al leer CSV.
+    Retorna un DataFrame concatenado y con NaN reemplazados por cadena vacía.
     """
+
+    encodings_to_try = ["utf-8", "latin-1", "iso-8859-1", "cp1252"]
     dfs = []
+
+    # Función interna para leer un CSV con fallback de encoding
+    def read_csv_with_encoding(file_path):
+        for enc in encodings_to_try:
+            try:
+                print(f"  -> Leyendo archivo '{file_path}' con encoding: {enc}")
+                return pd.read_csv(file_path, dtype=str, encoding=enc)
+            except UnicodeDecodeError:
+                print(f"     Falló con encoding {enc}, probando siguiente...")
+        raise UnicodeDecodeError(f"No se pudo leer '{file_path}' con ningún encoding válido.")
+
+    # Si es carpeta, leer todos los archivos
     if os.path.isdir(path):
         for fname in sorted(os.listdir(path)):
             full = os.path.join(path, fname)
             ext = os.path.splitext(fname)[1].lower()
+
             if ext == ".csv":
-                dfs.append(pd.read_csv(full, dtype=str))
+                try:
+                    dfs.append(read_csv_with_encoding(full))
+                except Exception as e:
+                    print(f"  [ERROR] No se pudo leer: {full} — {e}")
+
             elif ext == ".parquet":
-                dfs.append(pd.read_parquet(full))
+                try:
+                    print(f"  -> Leyendo Parquet: {full}")
+                    dfs.append(pd.read_parquet(full))
+                except Exception as e:
+                    print(f"  [ERROR] No se pudo leer Parquet: {full} — {e}")
+
+    # Si es archivo individual
     else:
+        if not os.path.exists(path):
+            print(f"Ruta no encontrada: {path}")
+            return pd.DataFrame()
+
         ext = os.path.splitext(path)[1].lower()
+
         if ext == ".csv":
-            dfs.append(pd.read_csv(path, dtype=str))
+            dfs.append(read_csv_with_encoding(path))
         elif ext == ".parquet":
+            print(f"  -> Leyendo Parquet: {path}")
             dfs.append(pd.read_parquet(path))
+        else:
+            print(f"Extensión no soportada: {ext}")
+            return pd.DataFrame()
+
     if not dfs:
+        print("No se encontró ningún archivo válido para procesar.")
         return pd.DataFrame()
+
     df = pd.concat(dfs, ignore_index=True)
     return df.fillna("")
-
 
 def fetch_sheet_as_df(spreadsheet, sheet_name):
     """
